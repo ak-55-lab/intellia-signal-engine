@@ -826,8 +826,10 @@ function renderSheet() {
   });
   table.querySelectorAll('.signal-cell:not(.cell-asleep)').forEach(td => {
     const col = columns.find(c => c.key === td.dataset.col) || {};
-    if (col.column_type !== 'enrichment') {
-      td.style.cursor = 'pointer';
+    td.style.cursor = 'pointer';
+    if (col.column_type === 'enrichment') {
+      td.addEventListener('click', () => openEnrichDrawer(td.dataset.acct, td.dataset.col));
+    } else {
       td.addEventListener('click', () => openSignalDrawer(td.dataset.acct, td.dataset.col));
     }
   });
@@ -850,11 +852,13 @@ function renderCell(acctId, colKey, hasFetched) {
 
   // Enrichment columns — show extracted value, not a score
   if (col.column_type === 'enrichment') {
-    if (!sig) return `<span class="cell-na">Not fetched</span>`;
-    if (sig.status === 'na') return `<span class="cell-na">N/A</span>`;
-    const val = sig.value;
+    if (sig && sig.status === 'na') return `<span class="cell-na">N/A</span>`;
+    // Prefer pipeline result, fall back to account.enrichment cache
+    const acc = accounts.find(a => a.id === acctId) || {};
+    const field = (sig && sig.enrich_field) || col.enrich_field || '';
+    const val = (sig && sig.value) || (acc.enrichment && acc.enrichment[field]) || '';
+    if (!val && !hasFetched) return `<span class="cell-na">Not fetched</span>`;
     if (!val) return `<span class="cell-quiet">— not found</span>`;
-    const field = sig.enrich_field || col.enrich_field || '';
     if (field === 'website') return `<a href="https://${val}" target="_blank" style="font-size:11.5px;color:var(--navy);text-decoration:none;">🌐 ${val}</a>`;
     return `<span class="cell-enrich-val">${val}</span>`;
   }
@@ -1481,6 +1485,57 @@ function openSignalDrawer(acctId, colKey) {
   document.getElementById('overlay').classList.add('show');
 }
 
+// ─── ENRICHMENT DETAIL DRAWER ─────────────────────────────────────────────────
+async function openEnrichDrawer(acctId, colKey) {
+  const acc = accounts.find(a => a.id === acctId) || {};
+  const col = columns.find(c => c.key === colKey) || {};
+  const sig = (signals[acctId] || {})[colKey];
+  const field = col.enrich_field || '';
+  const val = (sig && sig.value) || (acc.enrichment && acc.enrichment[field]) || '';
+
+  let html = `<div class="detail-meta"><span class="tag">✦ Enrichment</span><span class="tag">${col.label||colKey}</span></div>
+    <h2>${acc.name}</h2>
+    <div class="d-section"><div class="lbl">Extracted field</div><p>${field || '—'}</p></div>
+    <div class="d-section"><div class="lbl">Value</div><p style="font-size:14px;font-weight:600;color:var(--ink);">`;
+
+  if (!val) {
+    html += `<span style="color:var(--ink-faint);font-weight:400;">Not found — run the pipeline to extract this field.</span>`;
+  } else if (field === 'website') {
+    html += `<a href="https://${val}" target="_blank" style="color:var(--navy);">🌐 ${val}</a>`;
+  } else {
+    html += val;
+  }
+  html += `</p></div>`;
+
+  // Trace section
+  html += `<div id="trace-section" style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px;">
+    <button id="trace-toggle" onclick="toggleTrace('${acctId}','${colKey}')"
+      style="background:none;border:1px solid var(--line);border-radius:5px;font-size:11px;color:var(--ink-faint);padding:5px 10px;cursor:pointer;width:100%;text-align:left;">
+      🔍 View extraction trace (query + search results)
+    </button>
+    <div id="trace-body" style="display:none;margin-top:8px;"></div>
+  </div>`;
+
+  // Re-run button
+  html += `<div class="d-actions" style="margin-top:12px;">
+    <button class="d-action-btn" onclick="rerunEnrichCell('${acctId}','${colKey}')">↺ Re-extract</button>
+  </div>`;
+
+  document.getElementById('drawer-content').innerHTML = html;
+  document.getElementById('drawer').classList.add('show');
+  document.getElementById('overlay').classList.add('show');
+}
+
+async function rerunEnrichCell(acctId, colKey) {
+  showToast('Re-extracting…');
+  const r = await fetch(`${API}/api/run-fetch`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ account_ids: [acctId], column_keys: [colKey] }),
+  });
+  if (r.ok) showToast('Running — check logs');
+  else showToast('Error starting pipeline');
+}
+
 // ─── SIGNAL TRACE / OBSERVABILITY ────────────────────────────────────────────
 async function toggleTrace(acctId, colKey) {
   const body = document.getElementById('trace-body');
@@ -1526,7 +1581,37 @@ function renderTrace(t) {
   const ts = t.ran_at ? new Date(t.ran_at).toLocaleString() : '—';
   let html = `<div style="font-size:11px;color:var(--ink-faint);margin-bottom:8px;">Run: ${ts} · <strong>${t.column_label}</strong> for <strong>${t.account_name}</strong></div>`;
 
-  // ── Fetch phase ──────────────────────────────────────────────────────────
+  // ── Enrichment trace (flat structure) ────────────────────────────────────
+  if (t.column_type === 'enrichment') {
+    const srcLabel = t.source === 'cache' ? '(loaded from cache — no search needed)' : `Brave Search`;
+    html += `<div class="tr-section">
+      <button class="tr-toggle tr-head" data-target="tr-enrich-fetch">▾ 1 · Search</button>
+      <div id="tr-enrich-fetch">
+        <div class="tr-src-block">
+          <div class="tr-src-head">🌐 <strong>${srcLabel}</strong>
+            <span class="tr-badge ${t.result_count > 0 ? 'ok' : 'empty'}">${t.result_count || 0} result${t.result_count !== 1 ? 's' : ''}</span>
+          </div>
+          <div class="tr-query">Query: <code>${t.query || '—'}</code></div>`;
+    (t.results || []).forEach((r, i) => {
+      html += `<div class="tr-result">
+        <div class="tr-result-title">${r.title||''}</div>
+        <div class="tr-result-snippet">${r.snippet||''}</div>
+        <div class="tr-result-url">${r.url||''}</div>
+      </div>`;
+    });
+    html += `</div></div></div>`;
+    html += `<div class="tr-section">
+      <button class="tr-toggle tr-head" data-target="tr-enrich-extract">▾ 2 · Extraction</button>
+      <div id="tr-enrich-extract">
+        <div class="tr-tier">
+          <div class="tr-tier-head">Field: <code>${t.enrich_field||'—'}</code> · Model: ${t.model||'(none)'}</div>
+          <div class="tr-result-final"><strong>Extracted value:</strong> ${t.value || '<em style="color:var(--ink-faint)">nothing extracted</em>'}</div>
+        </div>
+      </div></div>`;
+    return html;
+  }
+
+  // ── Signal trace — Fetch phase ────────────────────────────────────────────
   html += `<div class="tr-section">
     <button class="tr-toggle tr-head" data-target="tr-fetch">▾ 1 · Data Fetch</button>
     <div id="tr-fetch">`;

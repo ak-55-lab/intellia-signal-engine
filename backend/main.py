@@ -217,16 +217,27 @@ async def fetch_data_for_column(account: dict, col_key: str, days_back: int):
     return "", [], [], []
 
 
-async def _extract_field_for_column(account: Dict[str, Any], enrich_field: str, custom_prompt: str = "") -> str:
+async def _extract_field_for_column(
+    account: Dict[str, Any], enrich_field: str, custom_prompt: str = ""
+) -> tuple:
     """Extract a single enrichment field for an account using Brave + Haiku.
     Checks account.enrichment cache first to avoid redundant searches.
+    Returns (value: str, trace: dict).
     """
-    # Use cached value if available
-    existing = account.get("enrichment") or {}
-    if enrich_field not in ("custom", "") and existing.get(enrich_field):
-        return str(existing[enrich_field])
-
     name = account["name"]
+    existing = account.get("enrichment") or {}
+
+    # Return cached value if available (avoids burning Brave quota)
+    if enrich_field not in ("custom", "") and existing.get(enrich_field):
+        cached_val = str(existing[enrich_field])
+        return cached_val, {
+            "query": "(cached)",
+            "result_count": 0,
+            "results": [],
+            "source": "cache",
+            "model": None,
+        }
+
     field_queries = {
         "website":        f"{name} official website homepage domain",
         "employees":      f"{name} total employees headcount workforce 2024 2025",
@@ -238,8 +249,10 @@ async def _extract_field_for_column(account: Dict[str, Any], enrich_field: str, 
     query = field_queries.get(enrich_field) or f"{name} {custom_prompt or enrich_field}"
 
     results = await _brave_search(query, max_results=5)
+    trace_base = {"query": query, "result_count": len(results), "results": results, "source": "brave"}
+
     if not results:
-        return ""
+        return "", {**trace_base, "model": None}
 
     snippets = "\n\n".join(
         f"[{r['title']}]\n{r['snippet']}\nURL: {r['url']}"
@@ -268,10 +281,11 @@ async def _extract_field_for_column(account: Dict[str, Any], enrich_field: str, 
             system=system,
             messages=[{"role": "user", "content": f"Company: {name}\n\nSearch results:\n{snippets}"}],
         )
-        return resp.content[0].text.strip().strip('"')
+        value = resp.content[0].text.strip().strip('"')
+        return value, {**trace_base, "model": "claude-haiku-4-5-20251001"}
     except Exception as e:
         print(f"[enrich-col] extraction failed for {name}/{enrich_field}: {e}")
-        return ""
+        return "", {**trace_base, "model": None, "error": str(e)}
 
 
 async def run_pipeline(account_ids, column_keys, triage_threshold, verify_threshold, days_back):
@@ -403,18 +417,32 @@ async def run_pipeline(account_ids, column_keys, triage_threshold, verify_thresh
                     enrichment_results[col_key] = {"status": "na"}
                     continue
                 try:
-                    value = await _extract_field_for_column(account, enrich_field, enrich_prompt)
+                    value, etrace = await _extract_field_for_column(account, enrich_field, enrich_prompt)
                     enrichment_results[col_key] = {
                         "value":        value,
                         "column_type":  "enrichment",
                         "enrich_field": enrich_field,
                     }
+                    # Store trace for observability drawer
+                    col_obj = get_column(col_key) or {}
+                    trace_store[f"{acct_id}:{col_key}"] = {
+                        "account_id":   acct_id,
+                        "account_name": acct_name,
+                        "column_key":   col_key,
+                        "column_label": col_obj.get("label", col_key),
+                        "column_type":  "enrichment",
+                        "enrich_field": enrich_field,
+                        "value":        value,
+                        **etrace,
+                        "ran_at": datetime.now(timezone.utc).isoformat(),
+                    }
                     # Cache in account enrichment dict + persist
-                    if value and enrich_field not in ("custom", ""):
-                        existing = account.get("enrichment") or {}
-                        existing[enrich_field] = value
-                        account["enrichment"] = existing
-                        db.save_account_enrichment(acct_id, existing)
+                    if enrich_field not in ("custom", ""):
+                        existing_enr = account.get("enrichment") or {}
+                        existing_enr[enrich_field] = value  # persist even empty so we know it was checked
+                        account["enrichment"] = existing_enr
+                        if value:
+                            db.save_account_enrichment(acct_id, existing_enr)
                     emit(f"  [enrich] {col.get('label', col_key)}: {value or '(not found)'}")
                 except Exception as e:
                     emit(f"  x Enrichment error [{col_key}]: {e}")
