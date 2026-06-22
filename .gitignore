@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Large data files — lives in Supabase, not needed in repo
+*.csv
+data/
+osha_data/
