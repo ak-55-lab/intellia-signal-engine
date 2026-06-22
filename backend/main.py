@@ -39,6 +39,7 @@ from column_config import (
 )
 import kb as knowledge_base
 import db
+from connectors.websearch import _brave_search
 
 app = FastAPI(title="Intellia Signal Engine", version="2.0.0")
 
@@ -115,14 +116,18 @@ class UpdateColumnRequest(BaseModel):
     cadence: Optional[str] = None
     segment: Optional[List[str]] = None
     sources: Optional[List[Dict[str, Any]]] = None
+    column_type: Optional[str] = None
+    enrich_field: Optional[str] = None
 
 class AddColumnRequest(BaseModel):
     label: str
-    prompt: str
+    prompt: str = ""
     segment: List[str] = ["commercial", "enterprise", "gov", "healthcare"]
     threshold: int = 6
     cadence: str = "Weekly"
     sources: Optional[List[Dict[str, Any]]] = None
+    column_type: str = "signal"
+    enrich_field: str = ""
 
 class ImportAccountsRequest(BaseModel):
     accounts: List[Dict[str, Any]]
@@ -212,6 +217,63 @@ async def fetch_data_for_column(account: dict, col_key: str, days_back: int):
     return "", [], [], []
 
 
+async def _extract_field_for_column(account: Dict[str, Any], enrich_field: str, custom_prompt: str = "") -> str:
+    """Extract a single enrichment field for an account using Brave + Haiku.
+    Checks account.enrichment cache first to avoid redundant searches.
+    """
+    # Use cached value if available
+    existing = account.get("enrichment") or {}
+    if enrich_field not in ("custom", "") and existing.get(enrich_field):
+        return str(existing[enrich_field])
+
+    name = account["name"]
+    field_queries = {
+        "website":        f"{name} official website homepage domain",
+        "employees":      f"{name} total employees headcount workforce 2024 2025",
+        "annual_revenue": f"{name} annual revenue earnings 2024 2025",
+        "industry":       f"{name} industry sector business overview",
+        "hq_city":        f"{name} headquarters location city state",
+        "founded":        f"{name} founded year company history",
+    }
+    query = field_queries.get(enrich_field) or f"{name} {custom_prompt or enrich_field}"
+
+    results = await _brave_search(query, max_results=5)
+    if not results:
+        return ""
+
+    snippets = "\n\n".join(
+        f"[{r['title']}]\n{r['snippet']}\nURL: {r['url']}"
+        for r in results
+    )
+
+    field_instructions = {
+        "website":        'Extract the primary corporate website domain only (e.g. "ups.com"). No https:// prefix. Return just the domain string.',
+        "employees":      'Extract total employee headcount as a string (e.g. "500,000+", "~12,000"). Return just the value.',
+        "annual_revenue": 'Extract most recent annual revenue as a string (e.g. "$97B", "$2.4B"). Return just the value.',
+        "industry":       'Extract 2-4 word industry label (e.g. "Package Delivery & Logistics"). Return just the label.',
+        "hq_city":        'Extract headquarters city and state (e.g. "Atlanta, GA"). Return just the location.',
+        "founded":        'Extract founding year as a 4-digit number (e.g. "1907"). Return just the year.',
+    }
+    instruction = field_instructions.get(enrich_field) or (custom_prompt or f"Extract the {enrich_field} for this company.")
+    system = (
+        f"You are a B2B data extraction assistant. Given web search results about a company, {instruction}\n"
+        "Return ONLY the extracted value as a plain string — no JSON, no labels, no prose. If not found, return empty string."
+    )
+
+    try:
+        client = get_client()
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=64,
+            system=system,
+            messages=[{"role": "user", "content": f"Company: {name}\n\nSearch results:\n{snippets}"}],
+        )
+        return resp.content[0].text.strip().strip('"')
+    except Exception as e:
+        print(f"[enrich-col] extraction failed for {name}/{enrich_field}: {e}")
+        return ""
+
+
 async def run_pipeline(account_ids, column_keys, triage_threshold, verify_threshold, days_back):
     run_state["running"] = True
     run_state["messages"] = []
@@ -230,8 +292,14 @@ async def run_pipeline(account_ids, column_keys, triage_threshold, verify_thresh
     kb_context = knowledge_base.get_context()
     col_configs = {c["key"]: c for c in active_cols}
 
+    # Split columns by type
+    signal_cols  = [c for c in active_cols if c.get("column_type", "signal") != "enrichment"]
+    enrich_cols  = [c for c in active_cols if c.get("column_type", "signal") == "enrichment"]
+
     col_label = f"column(s): {', '.join(column_keys)}" if column_keys else f"{len(active_cols)} active column(s)"
     emit(f"Starting pipeline -- {len(target_accounts)} account(s), {col_label}")
+    if enrich_cols:
+        emit(f"  Enrichment columns: {', '.join(c['label'] for c in enrich_cols)}")
     if kb_context:
         emit(f"Knowledge base loaded -- {len(kb_context):,} chars of context")
 
@@ -244,13 +312,13 @@ async def run_pipeline(account_ids, column_keys, triage_threshold, verify_thresh
         emit(f"-> {acct_name}")
 
         try:
+            # ── Signal columns: fetch → score ──────────────────────────────────
             column_data: Dict[str, str] = {}
             raw_rows: Dict[str, list] = {}
-
             sources_checked_map: Dict[str, list] = {}
             fetch_trace_map:     Dict[str, list] = {}
 
-            for col in active_cols:
+            for col in signal_cols:
                 col_key = col["key"]
                 acct_segments = account.get("segment", [])
                 col_segments = col.get("segment", [])
@@ -283,55 +351,81 @@ async def run_pipeline(account_ids, column_keys, triage_threshold, verify_thresh
                         signal_store[acct_id] = {}
                     signal_store[acct_id][col_key] = {"status": "na"}
 
-            data_found = [k for k, v in column_data.items() if v and v != "__NA__" and "No " not in v[:20]]
-            emit(f"  Tier 1 done -- data in {len(data_found)}/{len(column_data)} column(s)")
+            scored: Dict[str, Any] = {}
+            if signal_cols:
+                data_found = [k for k, v in column_data.items() if v and v != "__NA__" and "No " not in v[:20]]
+                emit(f"  Tier 1 done -- data in {len(data_found)}/{len(column_data)} column(s)")
 
-            if not data_found:
-                if acct_id not in signal_store:
-                    signal_store[acct_id] = {}
-                signal_store[acct_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
-                continue
+                if data_found:
+                    scoreable = {k: v for k, v in column_data.items() if v != "__NA__"}
+                    emit(f"  Scoring with Claude...")
+                    scored = await score_all_columns(
+                        account_name=acct_name,
+                        column_data=scoreable,
+                        column_configs=col_configs,
+                        triage_threshold=triage_threshold,
+                        verify_threshold=verify_threshold,
+                        kb_context=kb_context,
+                    )
 
-            scoreable = {k: v for k, v in column_data.items() if v != "__NA__"}
+                    for col_key, result in scored.items():
+                        if result:
+                            rows = raw_rows.get(col_key, [])
+                            result["raw_count"] = len(rows)
+                            result["sources_checked"] = sources_checked_map.get(col_key, [])
+                            if rows:
+                                result["date"] = (
+                                    rows[0].get("open_date") or
+                                    rows[0].get("survey_date") or
+                                    "recent"
+                                )
+                            scoring_trace = result.pop("_trace", None)
+                            col_obj = get_column(col_key) or {}
+                            trace_store[f"{acct_id}:{col_key}"] = {
+                                "account_id":   acct_id,
+                                "account_name": acct_name,
+                                "column_key":   col_key,
+                                "column_label": col_obj.get("label", col_key),
+                                "fetch":        fetch_trace_map.get(col_key, []),
+                                "scoring":      scoring_trace,
+                                "ran_at":       datetime.now(timezone.utc).isoformat(),
+                            }
 
-            emit(f"  Scoring with Claude...")
-            scored = await score_all_columns(
-                account_name=acct_name,
-                column_data=scoreable,
-                column_configs=col_configs,
-                triage_threshold=triage_threshold,
-                verify_threshold=verify_threshold,
-                kb_context=kb_context,
-            )
-
-            for col_key, result in scored.items():
-                if result:
-                    rows = raw_rows.get(col_key, [])
-                    result["raw_count"] = len(rows)
-                    result["sources_checked"] = sources_checked_map.get(col_key, [])
-                    if rows:
-                        result["date"] = (
-                            rows[0].get("open_date") or
-                            rows[0].get("survey_date") or
-                            "recent"
-                        )
-                    # Extract and store full trace, keep _trace out of signal_store
-                    scoring_trace = result.pop("_trace", None)
-                    col_obj = get_column(col_key) or {}
-                    trace_store[f"{acct_id}:{col_key}"] = {
-                        "account_id":   acct_id,
-                        "account_name": acct_name,
-                        "column_key":   col_key,
-                        "column_label": col_obj.get("label", col_key),
-                        "fetch":        fetch_trace_map.get(col_key, []),
-                        "scoring":      scoring_trace,
-                        "ran_at":       datetime.now(timezone.utc).isoformat(),
+            # ── Enrichment columns: extract field value ────────────────────────
+            enrichment_results: Dict[str, Any] = {}
+            for col in enrich_cols:
+                col_key     = col["key"]
+                enrich_field = col.get("enrich_field", "")
+                enrich_prompt = col.get("prompt", "")
+                acct_segments = account.get("segment", [])
+                col_segments  = col.get("segment", [])
+                if acct_segments and col_segments and not any(s in col_segments for s in acct_segments):
+                    enrichment_results[col_key] = {"status": "na"}
+                    continue
+                try:
+                    value = await _extract_field_for_column(account, enrich_field, enrich_prompt)
+                    enrichment_results[col_key] = {
+                        "value":        value,
+                        "column_type":  "enrichment",
+                        "enrich_field": enrich_field,
                     }
+                    # Cache in account enrichment dict + persist
+                    if value and enrich_field not in ("custom", ""):
+                        existing = account.get("enrichment") or {}
+                        existing[enrich_field] = value
+                        account["enrichment"] = existing
+                        db.save_account_enrichment(acct_id, existing)
+                    emit(f"  [enrich] {col.get('label', col_key)}: {value or '(not found)'}")
+                except Exception as e:
+                    emit(f"  x Enrichment error [{col_key}]: {e}")
+                    enrichment_results[col_key] = {"value": "", "column_type": "enrichment", "enrich_field": enrich_field}
 
+            # ── Merge into signal_store ────────────────────────────────────────
             if acct_id not in signal_store:
                 signal_store[acct_id] = {}
             signal_store[acct_id].update({
                 **scored,
+                **enrichment_results,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             })
 
@@ -343,7 +437,7 @@ async def run_pipeline(account_ids, column_keys, triage_threshold, verify_thresh
             high = [(k, v["score"]) for k, v in scored.items() if v and v.get("score", 0) >= 7]
             if high:
                 emit(f"  + High signals: {', '.join(f'{k}={s}' for k,s in high)}")
-            else:
+            elif signal_cols:
                 emit(f"  + Scored -- no high signals this cycle")
 
         except Exception as e:
@@ -458,6 +552,8 @@ async def create_column(request: AddColumnRequest):
         threshold=request.threshold,
         cadence=request.cadence,
         sources=request.sources,
+        column_type=request.column_type,
+        enrich_field=request.enrich_field,
     )
     # Persist to Supabase — sort_order = last position
     sort_order = len(get_all_columns()) * 10
@@ -740,6 +836,110 @@ async def health():
 
 
 # ─────────────────────────────────────────────────────────────
+# Account enrichment — Brave search + Claude Haiku extraction
+# Fields: website, employees, annual_revenue, industry, hq_city
+# ─────────────────────────────────────────────────────────────
+
+ENRICH_SYSTEM = """You are a B2B data enrichment assistant. Given web search results about a company,
+extract the following fields as a JSON object. Be concise and factual. Use null if unknown.
+Return ONLY valid JSON, no prose.
+
+Fields:
+- website: primary corporate domain only (e.g. "ups.com"), no https:// prefix
+- employees: headcount as a string (e.g. "500,000+", "~12,000")
+- annual_revenue: most recent full-year revenue as a string (e.g. "$97B", "$2.4B")
+- industry: 2-4 word industry label (e.g. "Package Delivery & Logistics")
+- hq_city: headquarters city and state (e.g. "Atlanta, GA")
+- founded: founding year as integer (e.g. 1907), or null
+"""
+
+async def _enrich_account(account: Dict[str, Any]) -> Dict[str, Any]:
+    """Search + extract enrichment fields for one account. Returns enrichment dict."""
+    name = account["name"]
+    query = f"{name} company employees revenue headquarters industry overview"
+
+    results = await _brave_search(query, max_results=8)
+    if not results:
+        return {}
+
+    snippets = "\n\n".join(
+        f"[{r['title']}]\n{r['snippet']}\nURL: {r['url']}"
+        for r in results
+    )
+    user_msg = f"Company: {name}\n\nSearch results:\n{snippets}"
+
+    try:
+        client = get_client()
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=256,
+            system=ENRICH_SYSTEM,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        raw = resp.content[0].text.strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        data = json.loads(raw)
+        data["enriched_at"] = datetime.now(timezone.utc).isoformat()
+        return data
+    except Exception as e:
+        print(f"[enrich] extraction failed for {name}: {e}")
+        return {}
+
+
+@app.post("/api/accounts/{account_id}/enrich")
+async def enrich_account(account_id: str):
+    """Enrich a single account with website, employees, revenue, industry via Brave + Claude."""
+    acct = next((a for a in account_store if a["id"] == account_id), None)
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if not config.get("BRAVE_API_KEY"):
+        raise HTTPException(status_code=400, detail="BRAVE_API_KEY not configured")
+
+    enrichment = await _enrich_account(acct)
+    if not enrichment:
+        raise HTTPException(status_code=502, detail="Enrichment returned no data")
+
+    existing = acct.get("enrichment") or {}
+    existing.update(enrichment)
+    acct["enrichment"] = existing
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, lambda: db.save_account_enrichment(account_id, existing))
+
+    return {"status": "ok", "account_id": account_id, "enrichment": existing}
+
+
+@app.post("/api/accounts/enrich-all")
+async def enrich_all_accounts(background_tasks: BackgroundTasks):
+    """Kick off background enrichment for all accounts missing enrichment data."""
+    if not config.get("BRAVE_API_KEY"):
+        raise HTTPException(status_code=400, detail="BRAVE_API_KEY not configured")
+
+    targets = [a for a in account_store if not a.get("enrichment", {}).get("website")]
+
+    async def _run_all():
+        for acct in targets:
+            try:
+                enrichment = await _enrich_account(acct)
+                if enrichment:
+                    existing = acct.get("enrichment") or {}
+                    existing.update(enrichment)
+                    acct["enrichment"] = existing
+                    db.save_account_enrichment(acct["id"], existing)
+                    print(f"[enrich] {acct['name']} -> {enrichment.get('website','?')}")
+                await asyncio.sleep(1)
+            except Exception as e:
+                print(f"[enrich] {acct['name']} failed: {e}")
+
+    background_tasks.add_task(_run_all)
+    return {"status": "started", "targets": len(targets)}
+
+
+# ─────────────────────────────────────────────────────────────
 # Settings — runtime API key configuration
 # ─────────────────────────────────────────────────────────────
 
@@ -777,9 +977,7 @@ def save_settings(req: SettingsRequest):
 
 
 # ─────────────────────────────────────────────────────────────
-# Static frontend — serve index.html at / so the app works
-# as a single URL in cloud deployments.
-# All /api/* routes registered above take precedence.
+# Static frontend
 # ─────────────────────────────────────────────────────────────
 
 _FRONTEND = Path(__file__).parent.parent / "frontend"
@@ -793,7 +991,6 @@ async def serve_frontend():
     return HTMLResponse("<h2>Frontend not found</h2>", status_code=404)
 
 
-# Serve any other static assets (CSS, images, etc.) from /frontend/
 if _FRONTEND.exists():
     app.mount("/static", StaticFiles(directory=str(_FRONTEND)), name="static")
 

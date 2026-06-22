@@ -62,8 +62,14 @@ create table if not exists signal_columns (
   builtin      boolean default false,
   sort_order   integer default 100,
   sources      jsonb,          -- [{type, label, target, query_hint}]
+  column_type  text default 'signal',   -- 'signal' | 'enrichment'
+  enrich_field text default '',         -- 'website' | 'employees' | 'annual_revenue' | 'industry' | 'hq_city' | 'founded' | 'custom'
   created_at   timestamptz default now()
 );
+
+-- Migration (run if table already exists):
+-- alter table signal_columns add column if not exists column_type text default 'signal';
+-- alter table signal_columns add column if not exists enrich_field text default '';
 
 create table if not exists raw_signals (
   id          uuid primary key default gen_random_uuid(),

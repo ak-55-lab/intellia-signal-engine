@@ -234,6 +234,12 @@ input[type=checkbox]{width:14px;height:14px;accent-color:var(--navy);}
 .cp-slider .val{font-size:11px;color:var(--ink);width:18px;text-align:right;}
 .cp-footer{display:flex;justify-content:space-between;align-items:center;margin-top:6px;gap:8px;}
 .cp-del{background:none;border:none;color:var(--red);font-size:11px;font-weight:500;}
+.type-toggle{display:flex;gap:6px;}
+.type-btn{flex:1;padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:11.5px;font-weight:500;color:var(--ink-soft);background:#fff;cursor:pointer;text-align:center;}
+.type-btn.on{border-color:var(--navy);background:var(--navy-soft);color:var(--navy);font-weight:600;}
+.enrich-field-row{display:flex;flex-direction:column;gap:6px;}
+.enrich-field-row select{width:100%;border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:11.5px;color:var(--ink);}
+.cell-enrich-val{font-size:11.5px;color:var(--ink);}
 
 /* DRAWER */
 .overlay{position:fixed;inset:0;background:rgba(20,28,40,.35);opacity:0;pointer-events:none;transition:opacity .2s;z-index:70;}
@@ -292,6 +298,7 @@ input[type=checkbox]{width:14px;height:14px;accent-color:var(--navy);}
     <input type="file" id="csv-input" accept=".csv" style="display:none">
     <button class="btn" id="upload-btn">⬆ Import CSV</button>
     <button class="btn" id="add-account-btn">+ Add Account</button>
+    <button class="btn btn-sm" id="enrich-all-btn" title="Enrich all accounts with website, employees, revenue">✦ Enrich All</button>
     <button class="btn btn-sm" id="settings-btn" title="API Keys &amp; Settings">⚙ Settings</button>
     <button class="btn btn-danger btn-sm" id="stop-fetch-btn" style="display:none;">⏹ Stop</button>
     <button class="btn btn-primary" id="run-fetch-btn">▶ Run Fetch</button>
@@ -724,9 +731,17 @@ function renderSheet() {
 
     body += `<tr data-acct="${acc.id}">`;
     body += `<td class="sel-cell"><input type="checkbox" class="row-check" data-id="${acc.id}" ${selected.has(acc.id) ? 'checked' : ''}></td>`;
+    const enr = acc.enrichment || {};
+    const websiteHtml = enr.website
+      ? `<a href="https://${enr.website}" target="_blank" style="color:var(--navy);font-size:11px;text-decoration:none;">🌐 ${enr.website}</a>`
+      : `<button class="enrich-btn" data-acct="${acc.id}" title="Enrich account data" style="font-size:10px;padding:1px 6px;border:1px dashed var(--line);border-radius:4px;background:none;color:var(--ink-faint);cursor:pointer;">+ Enrich</button>`;
+    const enrichMeta = enr.employees || enr.annual_revenue || enr.industry
+      ? `<span style="font-size:10px;color:var(--ink-faint);">${[enr.industry, enr.employees, enr.annual_revenue].filter(Boolean).join(' · ')}</span>`
+      : '';
     body += `<td class="acct-cell">
       <button class="acct-name-btn" data-acct="${acc.id}">${acc.name}</button>
       <div style="margin-top:3px;">${(acc.segment||[]).map(s => `<span class="seg-tag">${s}</span>`).join(' ')} <span class="acct-tag">${acc.group||''}</span></div>
+      <div style="margin-top:3px;display:flex;align-items:center;gap:8px;">${websiteHtml}${enrichMeta}</div>
     </td>`;
     visibleCols.forEach(col => {
       const on = col.on;
@@ -748,6 +763,26 @@ function renderSheet() {
       updateBulkBar();
     });
   });
+  // Enrich buttons
+  table.querySelectorAll('.enrich-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const id = btn.dataset.acct;
+      btn.textContent = '⏳';
+      btn.disabled = true;
+      try {
+        const r = await fetch(`${API}/api/accounts/${id}/enrich`, {method:'POST'});
+        const d = await r.json();
+        if (d.enrichment) {
+          const acct = accounts.find(a => a.id === id);
+          if (acct) acct.enrichment = d.enrichment;
+          showToast(`Enriched: ${d.enrichment.website || 'done'}`);
+          renderSheet();
+        }
+      } catch(e) { showToast('Enrichment failed'); btn.textContent = '+ Enrich'; btn.disabled = false; }
+    });
+  });
+
   // Column header move buttons
   table.querySelectorAll('.col-mv-btn').forEach(btn => {
     btn.addEventListener('click', e => {
@@ -790,8 +825,11 @@ function renderSheet() {
     b.addEventListener('click', () => openAccountDrawer(b.dataset.acct));
   });
   table.querySelectorAll('.signal-cell:not(.cell-asleep)').forEach(td => {
-    td.style.cursor = 'pointer';
-    td.addEventListener('click', () => openSignalDrawer(td.dataset.acct, td.dataset.col));
+    const col = columns.find(c => c.key === td.dataset.col) || {};
+    if (col.column_type !== 'enrichment') {
+      td.style.cursor = 'pointer';
+      td.addEventListener('click', () => openSignalDrawer(td.dataset.acct, td.dataset.col));
+    }
   });
   document.getElementById('add-col-btn').addEventListener('click', e => {
     e.stopPropagation();
@@ -807,7 +845,21 @@ function renderSheet() {
 
 function renderCell(acctId, colKey, hasFetched) {
   if (!hasFetched) return `<span class="cell-na">Not fetched</span>`;
+  const col = columns.find(c => c.key === colKey) || {};
   const sig = (signals[acctId] || {})[colKey];
+
+  // Enrichment columns — show extracted value, not a score
+  if (col.column_type === 'enrichment') {
+    if (!sig) return `<span class="cell-na">Not fetched</span>`;
+    if (sig.status === 'na') return `<span class="cell-na">N/A</span>`;
+    const val = sig.value;
+    if (!val) return `<span class="cell-quiet">— not found</span>`;
+    const field = sig.enrich_field || col.enrich_field || '';
+    if (field === 'website') return `<a href="https://${val}" target="_blank" style="font-size:11.5px;color:var(--navy);text-decoration:none;">🌐 ${val}</a>`;
+    return `<span class="cell-enrich-val">${val}</span>`;
+  }
+
+  // Signal columns — score pill
   if (sig && sig.status === 'na') return `<span class="cell-na" title="This signal column doesn't apply to this account's segment">N/A</span>`;
   if (!sig || sig.score == null) {
     const ago = fmtAgo((signals[acctId] || {}).updated_at);
@@ -1028,6 +1080,23 @@ async function saveSettings() {
   } catch(e) { showToast('Failed to save keys'); }
 }
 document.getElementById('settings-btn').addEventListener('click', openSettings);
+
+document.getElementById('enrich-all-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('enrich-all-btn');
+  btn.textContent = '⏳ Enriching…';
+  btn.disabled = true;
+  try {
+    const r = await fetch(`${API}/api/accounts/enrich-all`, {method:'POST'});
+    const d = await r.json();
+    showToast(`Enriching ${d.targets} accounts in background — refresh in ~2 min`);
+    // Poll and refresh accounts every 15s for 2 min
+    let polls = 0;
+    const poll = setInterval(async () => {
+      await loadAccounts(); renderSheet(); polls++;
+      if (polls >= 8) { clearInterval(poll); btn.textContent = '✦ Enrich All'; btn.disabled = false; }
+    }, 15000);
+  } catch(e) { showToast('Enrich All failed — check BRAVE_API_KEY'); btn.textContent = '✦ Enrich All'; btn.disabled = false; }
+});
 document.getElementById('settings-modal').addEventListener('click', e => {
   if (e.target === document.getElementById('settings-modal')) closeSettings();
 });
@@ -1081,49 +1150,89 @@ document.getElementById('add-acct-save').addEventListener('click', async () => {
 function openColPopover(colKey, anchorEl) {
   const pop = document.getElementById('col-popover');
   const isNew = colKey === null;
-  const col = isNew ? { label:'', prompt:'', segment:['healthcare','enterprise'], threshold:6, cadence:'Weekly', on:true } : (columns.find(c => c.key === colKey) || {});
+  const col = isNew ? { label:'', prompt:'', segment:['healthcare','enterprise'], threshold:6, cadence:'Weekly', on:true, column_type:'signal', enrich_field:'' } : (columns.find(c => c.key === colKey) || {});
   openColKey = colKey;
+  const colType = col.column_type || 'signal';
 
   const allSegs = ['healthcare','logistics','manufacturing','energy','utilities','enterprise','gov'];
+  const ENRICH_FIELDS = [
+    { value:'website',        label:'Website' },
+    { value:'employees',      label:'Employees' },
+    { value:'annual_revenue', label:'Annual Revenue' },
+    { value:'industry',       label:'Industry' },
+    { value:'hq_city',        label:'HQ City' },
+    { value:'founded',        label:'Founded Year' },
+    { value:'custom',         label:'Custom (use prompt)' },
+  ];
+
   pop.innerHTML = `
     <div class="cp-head">
-      <input class="name-input" id="cp-name" value="${col.label||''}" placeholder="Signal name…">
+      <input class="name-input" id="cp-name" value="${col.label||''}" placeholder="Column name…">
       <button class="cp-close" id="cp-close">✕</button>
     </div>
     <div class="cp-field">
-      <div class="cp-label" style="display:flex;align-items:center;justify-content:space-between;">
-        <span>Scoring prompt</span>
-        <button id="cp-refine" style="background:var(--navy-soft);border:1px solid var(--navy-soft2);color:var(--navy);border-radius:5px;font-size:10px;font-weight:600;padding:3px 8px;cursor:pointer;">✦ Refine</button>
+      <div class="cp-label">Column type</div>
+      <div class="type-toggle">
+        <button class="type-btn ${colType==='signal'?'on':''}" data-type="signal">📊 Signal</button>
+        <button class="type-btn ${colType==='enrichment'?'on':''}" data-type="enrichment">✦ Enrichment</button>
       </div>
-      <textarea id="cp-prompt" placeholder="Describe what makes this signal relevant to Cority…">${col.prompt||''}</textarea>
-      <div id="cp-refine-status" style="font-size:10px;color:var(--ink-faint);margin-top:4px;display:none;"></div>
     </div>
+
+    <!-- Signal-only fields -->
+    <div id="cp-signal-fields" style="${colType==='enrichment'?'display:none;':''}">
+      <div class="cp-field">
+        <div class="cp-label" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>Scoring prompt</span>
+          <button id="cp-refine" style="background:var(--navy-soft);border:1px solid var(--navy-soft2);color:var(--navy);border-radius:5px;font-size:10px;font-weight:600;padding:3px 8px;cursor:pointer;">✦ Refine</button>
+        </div>
+        <textarea id="cp-prompt" placeholder="Describe what makes this signal relevant…">${col.prompt||''}</textarea>
+        <div id="cp-refine-status" style="font-size:10px;color:var(--ink-faint);margin-top:4px;display:none;"></div>
+      </div>
+      <div class="cp-field">
+        <div class="cp-label">Alert threshold — higher = fewer, more confident alerts</div>
+        <div class="cp-slider"><input type="range" id="cp-threshold" min="1" max="10" value="${col.threshold||6}"><span class="val" id="cp-tv">${col.threshold||6}</span></div>
+      </div>
+      <div class="cp-field">
+        <div class="cp-label" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>Knowledge Sources</span>
+          <button id="cp-toggle-picker" style="background:var(--navy-soft);border:1px solid var(--navy-soft2);color:var(--navy);border-radius:5px;font-size:10px;font-weight:600;padding:3px 8px;cursor:pointer;">+ Add Source</button>
+        </div>
+        <div class="src-list" id="cp-sources"></div>
+        <div class="src-picker" id="cp-picker" style="display:none;">
+          <div class="src-picker-label">PRESETS</div>
+          <div class="src-presets" id="cp-presets"></div>
+          <div class="src-custom">
+            <input id="cp-custom-domain" placeholder="Custom domain (e.g. site.com)">
+            <button id="cp-add-custom">Add site</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enrichment-only fields -->
+    <div id="cp-enrich-fields" style="${colType==='signal'?'display:none;':''}">
+      <div class="cp-field">
+        <div class="cp-label">Field to extract</div>
+        <div class="enrich-field-row">
+          <select id="cp-enrich-field">
+            ${ENRICH_FIELDS.map(f => `<option value="${f.value}" ${col.enrich_field===f.value?'selected':''}>${f.label}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="cp-field" id="cp-custom-prompt-field" style="${col.enrich_field==='custom'?'':'display:none;'}">
+        <div class="cp-label">Custom extraction prompt</div>
+        <textarea id="cp-prompt" placeholder="e.g. Extract the primary EHS software vendor this company uses">${col.prompt||''}</textarea>
+      </div>
+    </div>
+
+    <!-- Shared fields -->
     <div class="cp-field">
       <div class="cp-label">Applies to segment</div>
       <div class="chip-row">${allSegs.map(s => `<span class="chip ${(col.segment||[]).includes(s)?'on':''}" data-seg="${s}">${s.charAt(0).toUpperCase()+s.slice(1)}</span>`).join('')}</div>
     </div>
-    <div class="cp-field">
-      <div class="cp-label">Alert threshold — higher = fewer, more confident alerts</div>
-      <div class="cp-slider"><input type="range" id="cp-threshold" min="1" max="10" value="${col.threshold||6}"><span class="val" id="cp-tv">${col.threshold||6}</span></div>
-    </div>
     <div class="cp-row2">
       <div class="cp-field"><div class="cp-label">Cadence</div>
         <select id="cp-cadence">${['Daily','Every 3 days','Weekly','Monthly'].map(o => `<option ${col.cadence===o?'selected':''}>${o}</option>`).join('')}</select>
-      </div>
-    </div>
-    <div class="cp-field">
-      <div class="cp-label" style="display:flex;align-items:center;justify-content:space-between;">
-        <span>Knowledge Sources</span>
-        <button id="cp-toggle-picker" style="background:var(--navy-soft);border:1px solid var(--navy-soft2);color:var(--navy);border-radius:5px;font-size:10px;font-weight:600;padding:3px 8px;cursor:pointer;">+ Add Source</button>
-      </div>
-      <div class="src-list" id="cp-sources"></div>
-      <div class="src-picker" id="cp-picker" style="display:none;">
-        <div class="src-picker-label">PRESETS</div>
-        <div class="src-presets" id="cp-presets"></div>
-        <div class="src-custom">
-          <input id="cp-custom-domain" placeholder="Custom domain (e.g. site.com)">
-          <button id="cp-add-custom">Add site</button>
-        </div>
       </div>
     </div>
     <div class="cp-footer">
@@ -1138,11 +1247,31 @@ function openColPopover(colKey, anchorEl) {
 
   document.getElementById('cp-close').addEventListener('click', closeColPopover);
   pop.querySelectorAll('.chip[data-seg]').forEach(chip => chip.addEventListener('click', () => chip.classList.toggle('on')));
+
+  // Type toggle
+  pop.querySelectorAll('.type-btn').forEach(btn => btn.addEventListener('click', () => {
+    pop.querySelectorAll('.type-btn').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    const isEnrich = btn.dataset.type === 'enrichment';
+    document.getElementById('cp-signal-fields').style.display = isEnrich ? 'none' : '';
+    document.getElementById('cp-enrich-fields').style.display = isEnrich ? '' : 'none';
+  }));
+
+  // Show/hide custom prompt when custom field is selected
+  const enrichFieldSel = document.getElementById('cp-enrich-field');
+  if (enrichFieldSel) {
+    enrichFieldSel.addEventListener('change', () => {
+      const customPromptField = document.getElementById('cp-custom-prompt-field');
+      if (customPromptField) customPromptField.style.display = enrichFieldSel.value === 'custom' ? '' : 'none';
+    });
+  }
+
   const thr = document.getElementById('cp-threshold');
-  thr.addEventListener('input', () => document.getElementById('cp-tv').textContent = thr.value);
+  if (thr) thr.addEventListener('input', () => document.getElementById('cp-tv').textContent = thr.value);
 
   // Refine prompt button
-  document.getElementById('cp-refine').addEventListener('click', async () => {
+  const refineBtn = document.getElementById('cp-refine');
+  if (refineBtn) refineBtn.addEventListener('click', async () => {
     const btn = document.getElementById('cp-refine');
     const status = document.getElementById('cp-refine-status');
     const prompt = document.getElementById('cp-prompt').value.trim();
@@ -1252,16 +1381,31 @@ function openColPopover(colKey, anchorEl) {
 async function saveColumn(colKey, sources) {
   const name = document.getElementById('cp-name').value.trim();
   if (!name) { showToast('Column name required'); return; }
-  const prompt = document.getElementById('cp-prompt').value.trim();
+
+  const activeTypeBtn = document.querySelector('#col-popover .type-btn.on');
+  const column_type = activeTypeBtn ? activeTypeBtn.dataset.type : 'signal';
+  const isEnrich = column_type === 'enrichment';
+
+  const promptEl = document.getElementById('cp-prompt');
+  const prompt = promptEl ? promptEl.value.trim() : '';
   const segment = [...document.querySelectorAll('#col-popover .chip[data-seg].on')].map(c => c.dataset.seg);
-  const threshold = parseInt(document.getElementById('cp-threshold').value);
+  const thrEl = document.getElementById('cp-threshold');
+  const threshold = thrEl ? parseInt(thrEl.value) : 6;
   const cadence = document.getElementById('cp-cadence').value;
-  const srcPayload = sources || [{ type:'web_general', label:'General Web' }];
+  const srcPayload = (!isEnrich && sources) ? sources : [{ type:'web_general', label:'General Web' }];
+  const enrichFieldEl = document.getElementById('cp-enrich-field');
+  const enrich_field = enrichFieldEl ? enrichFieldEl.value : '';
+
+  const payload = {
+    label: name, prompt, segment: segment.length ? segment : ['enterprise'],
+    threshold, cadence, sources: srcPayload,
+    column_type, enrich_field,
+  };
 
   if (!colKey) {
     const r = await fetch(`${API}/api/columns`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ label:name, prompt, segment: segment.length ? segment : ['healthcare'], threshold, cadence, sources: srcPayload }),
+      body: JSON.stringify(payload),
     });
     const col = await r.json();
     columns.push(col);
@@ -1269,10 +1413,10 @@ async function saveColumn(colKey, sources) {
   } else {
     await fetch(`${API}/api/columns/${colKey}`, {
       method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ label:name, prompt, segment, threshold, cadence, sources: srcPayload }),
+      body: JSON.stringify(payload),
     });
     const col = columns.find(c => c.key === colKey);
-    if (col) Object.assign(col, { label:name, prompt, segment, threshold, cadence, sources: srcPayload });
+    if (col) Object.assign(col, payload);
     showToast(`"${name}" updated`);
   }
   closeColPopover(); renderSheet();

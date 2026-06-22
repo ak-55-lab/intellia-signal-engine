@@ -164,12 +164,14 @@ def get_column(key: str) -> Optional[Dict[str, Any]]:
 
 def add_column(
     label: str,
-    prompt: str,
-    segment: List[str],
+    prompt: str = "",
+    segment: List[str] = None,
     threshold: int = 6,
     cadence: str = "Weekly",
     source_type: str = "websearch",
     sources: Optional[List[Dict[str, Any]]] = None,
+    column_type: str = "signal",
+    enrich_field: str = "",
 ) -> Dict[str, Any]:
     key = "col_" + str(uuid.uuid4())[:8]
     col = {
@@ -177,14 +179,16 @@ def add_column(
         "label": label,
         "source_type": source_type,
         "on": True,
-        "segment": segment,
+        "segment": segment or [],
         "prompt": prompt,
         "threshold": threshold,
         "cadence": cadence,
         "budget": 5,
-        "has_prompt": True,
+        "has_prompt": bool(prompt),
         "builtin": False,
         "sources": sources or [{"type": "web_general", "label": "General Web"}],
+        "column_type": column_type,
+        "enrich_field": enrich_field,
     }
     _columns[key] = col
     _column_order.append(key)
@@ -194,7 +198,7 @@ def add_column(
 def update_column(key: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if key not in _columns:
         return None
-    allowed = {"label", "prompt", "on", "threshold", "cadence", "segment", "source_type", "sources"}
+    allowed = {"label", "prompt", "on", "threshold", "cadence", "segment", "source_type", "sources", "column_type", "enrich_field"}
     for field, value in updates.items():
         if field in allowed:
             _columns[key][field] = value

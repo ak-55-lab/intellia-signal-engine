@@ -159,6 +159,7 @@ def _account_to_row(acct: Dict[str, Any]) -> Dict[str, Any]:
         "hq_state": acct.get("hq_state", ""),
         "osha_confirmed": acct.get("osha_confirmed", False),
         "source": acct.get("source", "manual"),
+        "enrichment": acct.get("enrichment") or {},
     }
 
 
@@ -178,7 +179,21 @@ def _row_to_account(row: Dict[str, Any]) -> Dict[str, Any]:
         "cms_search": row.get("cms_search") or [],
         "hq_state": row.get("hq_state", ""),
         "osha_confirmed": row.get("osha_confirmed", False),
+        "enrichment": row.get("enrichment") or {},
     }
+
+
+def save_account_enrichment(account_id: str, enrichment: Dict[str, Any]) -> bool:
+    """Patch only the enrichment JSONB field for an account."""
+    sb = get_supabase()
+    if not sb:
+        return False
+    try:
+        sb.table("accounts").update({"enrichment": enrichment}).eq("id", account_id).execute()
+        return True
+    except Exception as e:
+        print(f"[db] save_account_enrichment failed for {account_id}: {e}")
+        return False
 
 
 def load_accounts() -> List[Dict[str, Any]]:
@@ -377,6 +392,8 @@ def _col_to_row(col: Dict[str, Any], sort_order: int = 100) -> Dict[str, Any]:
         "builtin": col.get("builtin", False),
         "sort_order": sort_order,
         "sources": col.get("sources") or [],
+        "column_type": col.get("column_type", "signal"),
+        "enrich_field": col.get("enrich_field", ""),
     }
 
 
@@ -394,6 +411,8 @@ def _row_to_col(row: Dict[str, Any]) -> Dict[str, Any]:
         "has_prompt": bool(row.get("prompt")),
         "builtin": row.get("builtin", False),
         "sources": row.get("sources") or [],
+        "column_type": row.get("column_type") or "signal",
+        "enrich_field": row.get("enrich_field") or "",
     }
 
 
@@ -454,8 +473,8 @@ def update_column_db(key: str, updates: Dict[str, Any]) -> bool:
     if not sb:
         return False
     field_map = {"on": "on_by_default"}
-    row = {field_map.get(k, k): v for k, v in updates.items()
-           if k in {"label", "prompt", "on", "threshold", "cadence", "segment", "source_type", "budget", "sources"}}
+    allowed = {"label", "prompt", "on", "threshold", "cadence", "segment", "sources", "column_type", "enrich_field"}
+    row = {field_map.get(k, k): v for k, v in updates.items() if k in allowed}
     if not row:
         return False
     try:
@@ -466,14 +485,5 @@ def update_column_db(key: str, updates: Dict[str, Any]) -> bool:
         return False
 
 
-# ─── Health ───────────────────────────────────────────────────────────────────
-
 def is_connected() -> bool:
-    sb = get_supabase()
-    if not sb:
-        return False
-    try:
-        sb.table("scored_signals").select("id").limit(1).execute()
-        return True
-    except Exception:
-        return False
+    return get_supabase() is not None

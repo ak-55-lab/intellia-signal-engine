@@ -22,6 +22,7 @@ ACCOUNTS = [
         "osha_search": ["United Parcel Service"],
         "cms_search": [],
         "hq_state": "GA",
+        "website": "",
         "description": "World's largest package delivery company, 500K+ employees. 1,200+ OSHA inspections across all 50 states. Major EHS software buyer.",
     },
     {
@@ -37,6 +38,7 @@ ACCOUNTS = [
         "osha_search": ["Amazon.com Services", "Amazon Fulfillment", "Amazon Logistics"],
         "cms_search": [],
         "hq_state": "WA",
+        "website": "",
         "description": "Largest US fulfillment network, 1M+ warehouse employees. 467+ OSHA inspections. Under heavy regulatory scrutiny for workplace safety.",
     },
     {
@@ -52,6 +54,7 @@ ACCOUNTS = [
         "osha_search": ["Federal Express", "FedEx Ground", "FedEx Express", "FedEx Freight"],
         "cms_search": [],
         "hq_state": "TN",
+        "website": "",
         "description": "Global logistics, 500K+ employees across Express, Ground, and Freight divisions. 616+ OSHA inspections.",
     },
     {
@@ -67,6 +70,7 @@ ACCOUNTS = [
         "osha_search": ["Southwest Airlines"],
         "cms_search": [],
         "hq_state": "TX",
+        "website": "",
         "description": "Largest US domestic airline, 60K+ employees. 101+ OSHA inspections. Aviation safety and ground ops EHS requirements.",
     },
     {
@@ -82,6 +86,7 @@ ACCOUNTS = [
         "osha_search": ["American Airlines"],
         "cms_search": [],
         "hq_state": "TX",
+        "website": "",
         "description": "World's largest airline by fleet size, 130K+ employees. 115+ OSHA inspections across maintenance, ramp, and ground ops.",
     },
     {
@@ -97,6 +102,7 @@ ACCOUNTS = [
         "osha_search": ["Americold Logistics", "Americold"],
         "cms_search": [],
         "hq_state": "GA",
+        "website": "",
         "description": "World's largest temperature-controlled warehouse REIT, 250+ facilities. 186+ OSHA inspections. Cold chain safety is a major compliance area.",
     },
     {
@@ -112,6 +118,7 @@ ACCOUNTS = [
         "osha_search": ["DHL Supply Chain", "DHL"],
         "cms_search": [],
         "hq_state": "OH",
+        "website": "",
         "description": "DHL's US contract logistics arm, 50K+ employees across 400+ warehouses. 92+ OSHA inspections.",
     },
 
@@ -130,6 +137,7 @@ ACCOUNTS = [
         "osha_search": ["Tyson Foods", "Tyson Fresh Meats"],
         "cms_search": [],
         "hq_state": "AR",
+        "website": "",
         "description": "Largest US meat processor, 120K+ employees. 359+ OSHA inspections. High-risk food processing environments with major EHS compliance exposure.",
     },
     {
@@ -145,6 +153,7 @@ ACCOUNTS = [
         "osha_search": ["Pilgrim's Pride", "Pilgrims Pride"],
         "cms_search": [],
         "hq_state": "CO",
+        "website": "",
         "description": "Second-largest US chicken producer, 60K+ employees. 108+ OSHA inspections across poultry processing plants.",
     },
     {
@@ -160,6 +169,7 @@ ACCOUNTS = [
         "osha_search": ["Bimbo Bakeries USA", "Bimbo Bakeries"],
         "cms_search": [],
         "hq_state": "PA",
+        "website": "",
         "description": "Largest US baked goods company (Entenmann's, Sara Lee, Thomas'), 20K+ employees. 215+ OSHA inspections.",
     },
     {
@@ -175,6 +185,7 @@ ACCOUNTS = [
         "osha_search": ["Smithfield Foods", "Smithfield"],
         "cms_search": [],
         "hq_state": "VA",
+        "website": "",
         "description": "World's largest pork processor, 40K+ US employees. 84+ OSHA inspections. High EHS exposure in meat processing.",
     },
 
@@ -193,6 +204,7 @@ ACCOUNTS = [
         "osha_search": ["International Paper"],
         "cms_search": [],
         "hq_state": "TN",
+        "website": "",
         "description": "World's largest paper and packaging company, 65K employees, 150+ mills globally. 238+ OSHA inspections.",
     },
     {
@@ -208,6 +220,7 @@ ACCOUNTS = [
         "osha_search": ["Tesla, Inc.", "Tesla Inc", "Tesla"],
         "cms_search": [],
         "hq_state": "TX",
+        "website": "",
         "description": "EV/energy manufacturing, Gigafactories across TX, NV, CA, NY. 228+ OSHA inspections. Under sustained OSHA scrutiny for injury reporting.",
     },
     {
@@ -223,6 +236,7 @@ ACCOUNTS = [
         "osha_search": ["Ford Motor Company", "Ford Motor"],
         "cms_search": [],
         "hq_state": "MI",
+        "website": "",
         "description": "Major US automaker, 170K+ employees, assembly plants across MI, KY, MO, IL. 165+ OSHA inspections.",
     },
     {
@@ -238,6 +252,7 @@ ACCOUNTS = [
         "osha_search": ["Caterpillar Inc", "Caterpillar"],
         "cms_search": [],
         "hq_state": "IL",
+        "website": "",
         "description": "World's largest construction/mining equipment manufacturer, 100K+ employees. 105+ OSHA inspections across IL, IN, KY, MI, OH plants.",
     },
 
@@ -256,6 +271,7 @@ ACCOUNTS = [
         "osha_search": ["Chevron U.S.A", "Chevron USA"],
         "cms_search": [],
         "hq_state": "CA",
+        "website": "",
         "description": "Major integrated energy company, refineries in CA, MS, TX. 68+ OSHA inspections. Process safety management is a core EHS requirement.",
     },
     {
@@ -271,6 +287,7 @@ ACCOUNTS = [
         "osha_search": ["Phillips 66 Company", "Phillips 66"],
         "cms_search": [],
         "hq_state": "TX",
+        "website": "",
         "description": "Major US refining/midstream/chemicals, 14 refineries across CA, IL, LA, TX, MT. 106+ OSHA inspections.",
     },
     {
@@ -286,6 +303,7 @@ ACCOUNTS = [
         "osha_search": ["Pacific Gas and Electric", "Pacific Gas & Electric", "PG&E"],
         "cms_search": [],
         "hq_state": "CA",
+        "website": "",
         "description": "California's largest utility, 71K employees, under intense post-wildfire regulatory pressure. 87+ OSHA inspections. Strong EHSQ software buyer.",
     },
 
@@ -304,6 +322,7 @@ ACCOUNTS = [
         "osha_search": ["Kaiser Foundation", "Kaiser Permanente"],
         "cms_search": ["KAISER PERMANENTE", "KAISER FOUNDATION"],
         "hq_state": "CA",
+        "website": "",
         "description": "Largest managed care org in the US, 40+ hospitals, 700+ clinics, 300K+ employees. 174+ OSHA inspections across CA, CO, DC, HI, MD, OR, VA.",
     },
     {
@@ -319,6 +338,7 @@ ACCOUNTS = [
         "osha_search": ["Veterans Affairs", "Dept of Veterans Affairs", "Department of Veterans Affairs", "VA Medical Center", "VAMC"],
         "cms_search": ["VETERANS AFFAIRS", "VA MEDICAL CENTER"],
         "hq_state": "DC",
+        "website": "",
         "description": "Federal healthcare system, 170+ VA medical centers nationwide, 400K+ employees. 666+ OSHA inspections across all states.",
     },
     {
@@ -334,6 +354,7 @@ ACCOUNTS = [
         "osha_search": ["Dignity Health", "CommonSpirit"],
         "cms_search": ["DIGNITY HEALTH", "COMMONSPIRIT"],
         "hq_state": "CA",
+        "website": "",
         "description": "Dignity Health is the western US arm of CommonSpirit Health, 40+ hospitals across AZ, CA, NV. 74+ OSHA inspections.",
     },
 ]
