@@ -745,6 +745,7 @@ async def health():
 
 class SettingsRequest(BaseModel):
     ANTHROPIC_API_KEY: Optional[str] = None
+    BRAVE_API_KEY:     Optional[str] = None
     SUPABASE_URL:      Optional[str] = None
     SUPABASE_KEY:      Optional[str] = None
 
@@ -763,6 +764,9 @@ def save_settings(req: SettingsRequest):
     if req.ANTHROPIC_API_KEY is not None:
         config.set_key("ANTHROPIC_API_KEY", req.ANTHROPIC_API_KEY)
         changed.append("ANTHROPIC_API_KEY")
+    if req.BRAVE_API_KEY is not None:
+        config.set_key("BRAVE_API_KEY", req.BRAVE_API_KEY)
+        changed.append("BRAVE_API_KEY")
     if req.SUPABASE_URL is not None:
         config.set_key("SUPABASE_URL", req.SUPABASE_URL)
         changed.append("SUPABASE_URL")

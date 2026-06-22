@@ -24,7 +24,7 @@ def set_key(key: str, value: str) -> None:
 
 def get_all_public() -> Dict[str, str]:
     """Return masked versions of all configured keys for the settings UI."""
-    keys = ["ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_KEY"]
+    keys = ["ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "BRAVE_API_KEY"]
     result = {}
     for k in keys:
         val = get(k)
@@ -42,4 +42,5 @@ def is_configured() -> Dict[str, bool]:
     return {
         "anthropic": bool(get("ANTHROPIC_API_KEY")),
         "supabase":  bool(get("SUPABASE_URL") and get("SUPABASE_KEY")),
+        "brave":     bool(get("BRAVE_API_KEY")),
     }

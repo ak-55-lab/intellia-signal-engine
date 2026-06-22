@@ -502,6 +502,11 @@ input[type=checkbox]{width:14px;height:14px;accent-color:var(--navy);}
         <div style="font-size:11px;color:var(--ink-faint);margin-top:3px;">Required for signal scoring. Get one at console.anthropic.com</div>
       </div>
       <div>
+        <label style="font-size:12px;font-weight:500;color:var(--ink-soft);display:block;margin-bottom:5px;">Brave Search API Key <span style="font-weight:400;color:var(--ink-faint);">(recommended for cloud)</span></label>
+        <input id="skey-brave" type="password" placeholder="BSA…" style="width:100%;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:13px;">
+        <div style="font-size:11px;color:var(--ink-faint);margin-top:3px;">Free tier: 2,000 queries/month — <a href="https://api.search.brave.com" target="_blank" style="color:var(--navy);">api.search.brave.com</a></div>
+      </div>
+      <div>
         <label style="font-size:12px;font-weight:500;color:var(--ink-soft);display:block;margin-bottom:5px;">Supabase URL</label>
         <input id="skey-sb-url" type="text" placeholder="https://xxxx.supabase.co" style="width:100%;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:13px;">
       </div>
@@ -1000,9 +1005,11 @@ function closeSettings() {
 async function saveSettings() {
   const body = {};
   const ak = document.getElementById('skey-anthropic').value.trim();
+  const bk = document.getElementById('skey-brave').value.trim();
   const su = document.getElementById('skey-sb-url').value.trim();
   const sk = document.getElementById('skey-sb-key').value.trim();
   if (ak) body.ANTHROPIC_API_KEY = ak;
+  if (bk) body.BRAVE_API_KEY = bk;
   if (su) body.SUPABASE_URL = su;
   if (sk) body.SUPABASE_KEY = sk;
   if (!Object.keys(body).length) { showToast('No keys entered'); return; }
