@@ -1606,6 +1606,7 @@ function renderTrace(t) {
         <div class="tr-tier">
           <div class="tr-tier-head">Field: <code>${t.enrich_field||'—'}</code> · Model: ${t.model||'(none)'}</div>
           <div class="tr-result-final"><strong>Extracted value:</strong> ${t.value || '<em style="color:var(--ink-faint)">nothing extracted</em>'}</div>
+          ${t.error ? `<div style="margin-top:6px;padding:5px 8px;background:#fdf3f3;border-radius:4px;font-size:10px;color:var(--red);"><strong>Error:</strong> ${t.error}</div>` : ''}
         </div>
       </div></div>`;
     return html;

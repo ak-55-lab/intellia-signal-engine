@@ -32,7 +32,7 @@ from connectors.osha_supabase import (
 )
 from connectors.cms import fetch_cms_deficiencies, format_cms_for_scoring
 from connectors.websearch import fetch_signal_for_column
-from scorer import score_all_columns
+from scorer import score_all_columns, get_client
 from column_config import (
     get_all_columns, get_active_columns, get_column,
     add_column, update_column, delete_column, seed_from_db,
