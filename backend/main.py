@@ -734,7 +734,7 @@ async def health():
         "issues": issues,
         "accounts_loaded": len(account_store),
         "signals_cached": len(signal_store),
-        "kb_docs": len(knowledge_base.list_docs()),
+        "kb_docs": len(knowledge_base.list_entries()),
         "osha_source": "supabase" if osha_sb_is_available() else ("csv" if csv_is_loaded() else "dol_api"),
     }
 
